@@ -121,9 +121,15 @@ class AuthServiceProxy(object):
 
     def _get_response(self):
         http_response = self.__conn.getresponse()
+
         if http_response is None:
             raise JSONRPCException({
                 'code': -342, 'message': 'missing HTTP response from server'})
 
-        return json.loads(http_response.read().decode('utf8'),
+        body = http_response.read()
+        if not body and http_response.status is not httplib.OK:
+            raise JSONRPCException({
+                'code': -342, 'message': 'HTTP status from server not OK: %d' % http_response.status})
+
+        return json.loads(body.decode('utf8'),
                           parse_float=decimal.Decimal)
