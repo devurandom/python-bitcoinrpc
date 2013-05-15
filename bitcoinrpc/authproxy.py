@@ -38,6 +38,7 @@ try:
     import http.client as httplib
 except ImportError:
     import httplib
+import io, zlib, gzip
 import base64
 import json
 import decimal
@@ -106,9 +107,12 @@ class AuthServiceProxy(object):
             return response['result']
 
     def _request(self, postdata):
-        headers = {'Host': self.__url.hostname,
-                   'User-Agent': USER_AGENT,
-                   'Content-type': 'application/json'}
+        headers = {
+            'Host': self.__url.hostname,
+            'User-Agent': USER_AGENT,
+            'Content-Type': 'application/json',
+            'Accept-Encoding': 'gzip,deflate',
+        }
         if self.__auth_header:
             headers['Authorization'] = self.__auth_header
         self.__conn.request('POST', self.__url.path, postdata, headers)
@@ -124,5 +128,21 @@ class AuthServiceProxy(object):
             raise JSONRPCException({
                 'code': -342, 'message': 'missing HTTP response from server'})
 
-        return json.loads(http_response.read().decode('utf8'),
+        body = http_response.read()
+        if not body and http_response.status is not httplib.OK:
+            raise JSONRPCException({
+                'code': -342, 'message': 'HTTP status from server not OK: %d' % http_response.status})
+
+        headers = http_response.getheaders()
+        headers = {k:v for k,v in headers}
+
+        encoding = headers.get('Content-Encoding')
+        if encoding in ('gzip', 'x-gzip', 'deflate'):
+            if encoding == 'deflate':
+                body = zlib.decompress(body)
+            else:
+                bio = io.BytesIO(body)
+                body = gzip.GzipFile(fileobj=bio, mode='rb').read()
+
+        return json.loads(body.decode('utf8'),
                           parse_float=decimal.Decimal)
