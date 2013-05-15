@@ -38,6 +38,7 @@ try:
     import http.client as httplib
 except ImportError:
     import httplib
+import io, zlib, gzip
 import base64
 import json
 import decimal
@@ -67,9 +68,11 @@ class AuthServiceProxy(object):
         else:
             port = self.__url.port
         self.__id_count = 0
-        authpair = "%s:%s" % (self.__url.username, self.__url.password)
-        authpair = authpair.encode('utf8')
-        self.__auth_header = "Basic %s" % base64.b64encode(authpair)
+        self.__auth_header = ""
+        if self.__url.username is not None:
+            authpair = "%s:%s" % (self.__url.username, self.__url.password or "")
+            authpair = authpair.encode('utf8')
+            self.__auth_header = "Basic %s" % base64.b64encode(authpair).decode('utf8')
         if self.__url.scheme == 'https':
             self.__conn = httplib.HTTPSConnection(self.__url.hostname, port,
                                                   None, None, False,
@@ -93,12 +96,7 @@ class AuthServiceProxy(object):
                                'method': self.__service_name,
                                'params': args,
                                'id': self.__id_count})
-        self.__conn.request('POST', self.__url.path, postdata,
-                            {'Host': self.__url.hostname,
-                             'User-Agent': USER_AGENT,
-                             'Authorization': self.__auth_header,
-                             'Content-type': 'application/json'})
-
+        self._request(postdata)
         response = self._get_response()
         if response['error'] is not None:
             raise JSONRPCException(response['error'])
@@ -108,14 +106,20 @@ class AuthServiceProxy(object):
         else:
             return response['result']
 
+    def _request(self, postdata):
+        headers = {
+            'Host': self.__url.hostname,
+            'User-Agent': USER_AGENT,
+            'Content-Type': 'application/json',
+            'Accept-Encoding': 'gzip,deflate',
+        }
+        if self.__auth_header:
+            headers['Authorization'] = self.__auth_header
+        self.__conn.request('POST', self.__url.path, postdata, headers)
+
     def _batch(self, rpc_call_list):
         postdata = json.dumps(list(rpc_call_list))
-        self.__conn.request('POST', self.__url.path, postdata,
-                            {'Host': self.__url.hostname,
-                             'User-Agent': USER_AGENT,
-                             'Authorization': self.__auth_header,
-                             'Content-type': 'application/json'})
-
+        self._request(postdata)
         return self._get_response()
 
     def _get_response(self):
@@ -124,5 +128,21 @@ class AuthServiceProxy(object):
             raise JSONRPCException({
                 'code': -342, 'message': 'missing HTTP response from server'})
 
-        return json.loads(http_response.read().decode('utf8'),
+        body = http_response.read()
+        if not body and http_response.status is not httplib.OK:
+            raise JSONRPCException({
+                'code': -342, 'message': 'HTTP status from server not OK: %d' % http_response.status})
+
+        headers = http_response.getheaders()
+        headers = {k:v for k,v in headers}
+
+        encoding = headers.get('Content-Encoding')
+        if encoding in ('gzip', 'x-gzip', 'deflate'):
+            if encoding == 'deflate':
+                body = zlib.decompress(body)
+            else:
+                bio = io.BytesIO(body)
+                body = gzip.GzipFile(fileobj=bio, mode='rb').read()
+
+        return json.loads(body.decode('utf8'),
                           parse_float=decimal.Decimal)
