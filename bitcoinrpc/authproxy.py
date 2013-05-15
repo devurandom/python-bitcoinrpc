@@ -54,8 +54,9 @@ HTTP_TIMEOUT = 30
 
 class JSONRPCException(Exception):
     def __init__(self, rpc_error):
-        Exception.__init__(self)
         self.error = rpc_error
+    def __str__(self):
+        return repr(self.error)
 
 
 class AuthServiceProxy(object):
@@ -124,6 +125,7 @@ class AuthServiceProxy(object):
 
     def _get_response(self):
         http_response = self.__conn.getresponse()
+
         if http_response is None:
             raise JSONRPCException({
                 'code': -342, 'message': 'missing HTTP response from server'})
